@@ -53,6 +53,7 @@ class FeatureRegressor(nn.Module):
 class FeatureDiscriminator(nn.Module):
     """
     Lightweight discriminator to distinguish between teacher and student features.
+    Returns logits (not probabilities).
     """
 
     def __init__(self, hidden_channels):
@@ -69,13 +70,13 @@ class FeatureDiscriminator(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(0.2),
             nn.Linear(hidden_channels // 4, 1),
-            nn.Sigmoid(),
+            # No Sigmoid - returns logits
         )
 
     def forward(self, x):
         pooled = self.global_pool(x)
         output = self.discriminator(pooled)
-        return output
+        return output  # Returns logits
 
 
 class DisDKD(nn.Module):
@@ -142,8 +143,8 @@ class DisDKD(nn.Module):
         # Feature discriminator
         self.discriminator = FeatureDiscriminator(hidden_channels)
 
-        # BCE loss for discriminator
-        self.bce_loss = nn.BCELoss()
+        # BCE loss with logits for discriminator
+        self.bce_loss = nn.BCEWithLogitsLoss()
 
         # Track current phase (1, 2, or 3)
         self.current_phase = 1
@@ -356,6 +357,7 @@ class DisDKD(nn.Module):
         """
         Phase 1: Train discriminator to distinguish teacher (1) from student (0).
         Student is completely frozen.
+        Discriminator outputs logits, not probabilities.
         """
         batch_size = x.size(0)
 
@@ -376,21 +378,23 @@ class DisDKD(nn.Module):
         # Match spatial dimensions
         student_hidden = self.match_spatial_dimensions(student_hidden, teacher_hidden)
 
-        # Discriminator predictions
-        teacher_pred = self.discriminator(teacher_hidden)
-        student_pred = self.discriminator(student_hidden.detach())
+        # Discriminator predictions (logits)
+        teacher_logits = self.discriminator(teacher_hidden)
+        student_logits = self.discriminator(student_hidden.detach())
 
         # Labels
         real_labels = torch.ones(batch_size, 1, device=x.device)
         fake_labels = torch.zeros(batch_size, 1, device=x.device)
 
-        # Discriminator loss
-        disc_loss_real = self.bce_loss(teacher_pred, real_labels)
-        disc_loss_fake = self.bce_loss(student_pred, fake_labels)
+        # Discriminator loss (BCEWithLogitsLoss handles sigmoid internally)
+        disc_loss_real = self.bce_loss(teacher_logits, real_labels)
+        disc_loss_fake = self.bce_loss(student_logits, fake_labels)
         disc_loss = (disc_loss_real + disc_loss_fake) / 2
 
         # Compute accuracy for early stopping check
         with torch.no_grad():
+            teacher_pred = torch.sigmoid(teacher_logits)  # Convert to probabilities
+            student_pred = torch.sigmoid(student_logits)
             teacher_correct = (teacher_pred > 0.5).float().sum()
             student_correct = (student_pred < 0.5).float().sum()
             disc_accuracy = (teacher_correct + student_correct) / (2 * batch_size)
@@ -410,6 +414,7 @@ class DisDKD(nn.Module):
         """
         Phase 2: Train student (up to layer G) to fool frozen discriminator.
         Pure adversarial, no CE loss (frozen fc produces meaningless logits).
+        Discriminator outputs logits, not probabilities.
         """
         batch_size = x.size(0)
 
@@ -431,12 +436,13 @@ class DisDKD(nn.Module):
         student_hidden = self.match_spatial_dimensions(student_hidden, teacher_hidden)
 
         # Adversarial loss: student wants to be classified as teacher (1)
-        student_pred = self.discriminator(student_hidden)
+        student_logits = self.discriminator(student_hidden)
         real_labels = torch.ones(batch_size, 1, device=x.device)
-        adversarial_loss = self.bce_loss(student_pred, real_labels)
+        adversarial_loss = self.bce_loss(student_logits, real_labels)
 
         # Compute fool rate for early stopping check
         with torch.no_grad():
+            student_pred = torch.sigmoid(student_logits)  # Convert to probabilities
             fool_rate = (student_pred > 0.5).float().mean()
 
         # Clear hooks
