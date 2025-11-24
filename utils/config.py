@@ -121,12 +121,6 @@ def parse_args():
         help="Max epochs for Phase 1 (discriminator warmup)",
     )
     parser.add_argument(
-        "--interleaving_epochs",
-        type=int,
-        default=10,
-        help="Epochs for Interleaving Phases"
-    )
-    parser.add_argument(
         "--disdkd_phase2_epochs",
         type=int,
         default=6,
@@ -155,6 +149,12 @@ def parse_args():
         type=float,
         default=0.88,
         help="Fool rate threshold for Phase 2 early exit",
+    )
+    parser.add_argument(
+        "--disdkd_interleave_epochs",
+        type=int,
+        default=0,
+        help="Number of epochs to alternate between Phase 1 and Phase 2 before starting Phase 3 (0 to disable interleaving)",
     )
     parser.add_argument(
         "--disdkd_phase1_lr",
@@ -278,7 +278,7 @@ def validate_and_setup_domains(args):
         args.val_domains = None
         print(f"Classic ML setup with domains: {args.train_domains}")
         print(
-            f"Train/val split: {int((1-args.test_size)*100)}%/{int(args.test_size*100)}%"
+            f"Train/Val split: {int((1-args.test_size)*100)}%/{int(args.test_size*100)}%"
         )
     else:
         if args.val_domains is None:
@@ -300,18 +300,29 @@ def validate_disdkd_config(args):
         return
 
     total_epochs = args.epochs
-    phase1 = args.disdkd_phase1_epochs
-    phase2 = args.disdkd_phase2_epochs
-
-    # Check if phases fit within total epochs
-    min_phase3_epochs = 5
-    if phase1 + phase2 + min_phase3_epochs > total_epochs:
-        print(f"\nWarning: DisDKD phase configuration may be tight!")
-        print(f"  Total epochs: {total_epochs}")
-        print(f"  Phase 1 max: {phase1}")
-        print(f"  Phase 2 max: {phase2}")
-        print(f"  Remaining for Phase 3: {total_epochs - phase1 - phase2}")
-        print(f"  Consider increasing --epochs or reducing phase durations.\n")
+    interleave_epochs = args.disdkd_interleave_epochs
+    
+    # If interleaving is enabled, validate accordingly
+    if interleave_epochs > 0:
+        min_phase3_epochs = 5
+        if interleave_epochs + min_phase3_epochs > total_epochs:
+            print(f"\nWarning: DisDKD interleaving configuration may be tight!")
+            print(f"  Total epochs: {total_epochs}")
+            print(f"  Interleaving epochs: {interleave_epochs}")
+            print(f"  Remaining for Phase 3: {total_epochs - interleave_epochs}")
+            print(f"  Consider increasing --epochs or reducing --disdkd_interleave_epochs.\n")
+    else:
+        # Original validation for non-interleaving mode
+        phase1 = args.disdkd_phase1_epochs
+        phase2 = args.disdkd_phase2_epochs
+        min_phase3_epochs = 5
+        if phase1 + phase2 + min_phase3_epochs > total_epochs:
+            print(f"\nWarning: DisDKD phase configuration may be tight!")
+            print(f"  Total epochs: {total_epochs}")
+            print(f"  Phase 1 max: {phase1}")
+            print(f"  Phase 2 max: {phase2}")
+            print(f"  Remaining for Phase 3: {total_epochs - phase1 - phase2}")
+            print(f"  Consider increasing --epochs or reducing phase durations.\n")
 
     # Check early exit thresholds
     if args.disdkd_disc_acc_threshold < 0.8:
@@ -373,31 +384,47 @@ def print_training_config(args):
             f"Regularization: gradient_penalty={args.disdkd_gradient_penalty}, "
             f"phase3_mixup={'on' if args.disdkd_phase3_mixup else 'off'}"
         )
-        print(f"\nPhase 1 (Discriminator Warmup):")
-        print(
-            f"  Max epochs: {args.disdkd_phase1_epochs}, Min epochs: {args.disdkd_phase1_min}"
-        )
-        print(f"  LR: {args.disdkd_phase1_lr}")
-        print(
-            f"  Early exit threshold: disc_acc >= {args.disdkd_disc_acc_threshold:.0%}"
-        )
-        print(f"\nPhase 2 (Adversarial Feature Alignment):")
-        print(
-            f"  Max epochs: {args.disdkd_phase2_epochs}, Min epochs: {args.disdkd_phase2_min}"
-        )
-        print(f"  LR: {args.disdkd_phase2_lr}")
-        print(
-            f"  Early exit threshold: fool_rate >= {args.disdkd_fool_rate_threshold:.0%}"
-        )
-        print(f"  Student trains: layers up to and including '{args.student_layer}'")
-        print(
-            f"  Feature match weight: {args.disdkd_phase2_match_weight} (auxiliary MSE)"
-        )
-        print(f"\nPhase 3 (DKD Fine-tuning):")
-        remaining = args.epochs - args.disdkd_phase1_epochs - args.disdkd_phase2_epochs
-        print(f"  Estimated epochs: ~{remaining} (depends on early exits)")
-        print(f"  LR: {args.disdkd_phase3_lr}")
-        print(f"  Loss: CE + DKD (adversarial components discarded)")
+        
+        # Check if interleaving is enabled
+        if args.disdkd_interleave_epochs > 0:
+            print(f"\n** INTERLEAVING MODE ENABLED **")
+            print(f"Interleaving epochs: {args.disdkd_interleave_epochs}")
+            print(f"  Alternating Phase 1 and Phase 2 for first {args.disdkd_interleave_epochs} epochs")
+            print(f"  - Even epochs (0, 2, 4, ...): Phase 1 (Discriminator)")
+            print(f"  - Odd epochs (1, 3, 5, ...): Phase 2 (Adversarial)")
+            print(f"  Early exit thresholds still apply within each phase")
+            print(f"\nPhase 3 (DKD Fine-tuning):")
+            remaining = args.epochs - args.disdkd_interleave_epochs
+            print(f"  Estimated epochs: ~{remaining}")
+            print(f"  LR: {args.disdkd_phase3_lr}")
+            print(f"  Loss: CE + DKD (adversarial components discarded)")
+        else:
+            print(f"\n** SEQUENTIAL MODE (default) **")
+            print(f"\nPhase 1 (Discriminator Warmup):")
+            print(
+                f"  Max epochs: {args.disdkd_phase1_epochs}, Min epochs: {args.disdkd_phase1_min}"
+            )
+            print(f"  LR: {args.disdkd_phase1_lr}")
+            print(
+                f"  Early exit threshold: disc_acc >= {args.disdkd_disc_acc_threshold:.0%}"
+            )
+            print(f"\nPhase 2 (Adversarial Feature Alignment):")
+            print(
+                f"  Max epochs: {args.disdkd_phase2_epochs}, Min epochs: {args.disdkd_phase2_min}"
+            )
+            print(f"  LR: {args.disdkd_phase2_lr}")
+            print(
+                f"  Early exit threshold: fool_rate >= {args.disdkd_fool_rate_threshold:.0%}"
+            )
+            print(f"  Student trains: layers up to and including '{args.student_layer}'")
+            print(
+                f"  Feature match weight: {args.disdkd_phase2_match_weight} (auxiliary MSE)"
+            )
+            print(f"\nPhase 3 (DKD Fine-tuning):")
+            remaining = args.epochs - args.disdkd_phase1_epochs - args.disdkd_phase2_epochs
+            print(f"  Estimated epochs: ~{remaining} (depends on early exits)")
+            print(f"  LR: {args.disdkd_phase3_lr}")
+            print(f"  Loss: CE + DKD (adversarial components discarded)")
 
         # Validate configuration
         validate_disdkd_config(args)
