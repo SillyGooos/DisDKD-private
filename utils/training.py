@@ -123,7 +123,7 @@ class Trainer:
         phase2_max = getattr(args, "disdkd_phase2_epochs", 6)
         phase1_min = getattr(args, "disdkd_phase1_min", 2)
         phase2_min = getattr(args, "disdkd_phase2_min", 4)
-        phase_interleaving = getattr(args, "interleaving_epochs", 10)
+        interleave_epochs = getattr(args, "disdkd_interleave_epochs", 10)
         disc_acc_threshold = getattr(args, "disdkd_disc_acc_threshold", 0.8)
         fool_rate_threshold = getattr(args, "disdkd_fool_rate_threshold", 0.88)
 
@@ -154,7 +154,7 @@ class Trainer:
         phase1_epochs_run = 0
         phase2_epochs_run = 0
 
-        alternating_epochs = min(10, total_epochs)
+        alternating_epochs = interleave_epochs
         print(
             f"Alternating Phase 1 and Phase 2 for the first {alternating_epochs} epochs"
         )
