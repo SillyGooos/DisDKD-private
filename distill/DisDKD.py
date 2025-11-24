@@ -78,16 +78,14 @@ class FeatureDiscriminator(nn.Module):
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
-        # Deliberately shallow head with high dropout to avoid overpowering
+        # Deliberately shallow head with higher dropout to avoid overpowering
         # the generator during warmup.
         self.discriminator = nn.Sequential(
             nn.Flatten(),
-            nn.Dropout(0.5),
-            nn.Linear(hidden_channels * 2, hidden_channels),
+            nn.Dropout(0.6),
+            nn.Linear(hidden_channels * 2, hidden_channels // 2),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(hidden_channels, hidden_channels // 2),
-            nn.ReLU(inplace=True),
+            nn.Dropout(0.6),
             nn.Linear(hidden_channels // 2, 1),
             # No Sigmoid - returns logits
         )
@@ -97,7 +95,7 @@ class FeatureDiscriminator(nn.Module):
     def _init_weights(self):
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight, gain=0.01)
+                nn.init.xavier_normal_(module.weight, gain=0.005)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.Conv2d):
