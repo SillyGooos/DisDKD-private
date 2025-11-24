@@ -129,7 +129,7 @@ def parse_args():
     parser.add_argument(
         "--disdkd_disc_acc_threshold",
         type=float,
-        default=0.8,
+        default=0.85,
         help="Discriminator accuracy threshold for Phase 1 early exit",
     )
     parser.add_argument(

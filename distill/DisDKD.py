@@ -59,9 +59,7 @@ class FeatureDiscriminator(nn.Module):
     def __init__(self, hidden_channels):
         super(FeatureDiscriminator, self).__init__()
 
-        # Keep spatial processing extremely light and leak-free by using
-        # depthwise conv + GroupNorm (per-sample normalization) ahead of the
-        # pooled head.
+        # Shallow spatial processing to keep receptive field without overfitting
         self.spatial = nn.Sequential(
             nn.Conv2d(
                 hidden_channels,
@@ -71,22 +69,22 @@ class FeatureDiscriminator(nn.Module):
                 groups=hidden_channels,
                 bias=False,
             ),
-            nn.GroupNorm(num_groups=min(32, hidden_channels), num_channels=hidden_channels),
+            nn.BatchNorm2d(hidden_channels),
             nn.ReLU(inplace=True),
         )
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
-        # Deliberately shallow head with higher dropout to avoid overpowering
-        # the generator during warmup.
+        # Deliberately shallow head with moderate dropout to avoid overpowering
+        # the generator during warmup. Multi-scale pooling doubles channel dim.
         self.discriminator = nn.Sequential(
             nn.Flatten(),
-            nn.Dropout(0.6),
-            nn.Linear(hidden_channels * 2, hidden_channels // 2),
+            nn.Dropout(0.5),
+            nn.Linear(hidden_channels * 2, hidden_channels),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.6),
-            nn.Linear(hidden_channels // 2, 1),
+            nn.Dropout(0.5),
+            nn.Linear(hidden_channels, 1),
             # No Sigmoid - returns logits
         )
 
@@ -499,6 +497,9 @@ class DisDKD(nn.Module):
             # Normalize / add noise so discriminator cannot rely on scale shortcuts
             teacher_hidden = self._preprocess_hidden(teacher_hidden, add_noise=True)
             student_hidden = self._preprocess_hidden(student_hidden)
+            teacher_hidden, student_hidden = self._batch_normalize_pair(
+                teacher_hidden, student_hidden
+            )
 
             # Discriminator predictions (logits)
             teacher_logits = self.discriminator(teacher_hidden)
