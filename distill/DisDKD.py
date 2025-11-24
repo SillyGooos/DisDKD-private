@@ -517,11 +517,6 @@ class DisDKD(nn.Module):
             disc_loss_fake = self.bce_loss(student_logits, fake_labels)
             disc_loss = (disc_loss_real + disc_loss_fake) / 2
 
-            # Keep the loss tensor explicitly bound to avoid stale references to
-            # legacy loss scaling variables when loading bytecode across runs.
-            loss_scale = teacher_logits.new_tensor(1.0)
-            disc_loss = disc_loss * loss_scale
-
             # Optional gradient penalty to stabilize discriminator training
             if (
                 self.training
