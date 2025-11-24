@@ -563,6 +563,11 @@ class DisDKD(nn.Module):
             teacher_hidden = self._preprocess_hidden(teacher_hidden, add_noise=True)
             student_hidden = self._preprocess_hidden(student_hidden)
 
+            # Apply shared batch normalization for fair feature matching
+            teacher_hidden, student_hidden = self._batch_normalize_pair(
+                teacher_hidden, student_hidden
+            )
+
             # Adversarial loss: student wants to be classified as teacher (1)
             student_logits = self.discriminator(student_hidden)
             real_labels = torch.ones(batch_size, 1, device=x.device)
