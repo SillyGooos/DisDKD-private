@@ -425,6 +425,10 @@ class DisDKD(nn.Module):
         # Match spatial dimensions
         student_hidden = self.match_spatial_dimensions(student_hidden, teacher_hidden)
 
+        # Normalize / add noise so discriminator cannot rely on scale shortcuts
+        teacher_hidden = self._preprocess_hidden(teacher_hidden, add_noise=True)
+        student_hidden = self._preprocess_hidden(student_hidden)
+
         # Discriminator predictions (logits)
         teacher_logits = self.discriminator(teacher_hidden)
         student_logits = self.discriminator(student_hidden.detach())
