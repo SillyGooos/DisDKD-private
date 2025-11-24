@@ -73,6 +73,15 @@ class FeatureDiscriminator(nn.Module):
             # No Sigmoid - returns logits
         )
 
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_normal_(module.weight, gain=0.01)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
     def forward(self, x):
         pooled = self.global_pool(x)
         output = self.discriminator(pooled)
@@ -83,7 +92,7 @@ class DisDKD(nn.Module):
     """
     Discriminator-enhanced Decoupled Knowledge Distillation (Three-Phase).
 
-    Phase 1: Pretrain discriminator and teacher regressor (student frozen)
+    Phase 1: Pretrain discriminator and regressors (student backbone frozen)
     Phase 2: Adversarial feature alignment (student up to layer G, discriminator frozen)
     Phase 3: DKD fine-tuning (entire student, regressors/discriminator discarded)
 
@@ -179,7 +188,7 @@ class DisDKD(nn.Module):
         """
         Set training phase and configure requires_grad accordingly.
 
-        Phase 1: Train discriminator + teacher_regressor (student frozen)
+        Phase 1: Train discriminator + both regressors (student backbone frozen)
         Phase 2: Train student (up to layer G) + student_regressor (discriminator frozen)
         Phase 3: Train entire student with DKD (adversarial components discarded)
         """
@@ -187,17 +196,17 @@ class DisDKD(nn.Module):
         self.current_phase = phase
 
         if phase == 1:
-            # Freeze: entire student, student_regressor
-            # Train: discriminator, teacher_regressor
+            # Freeze: entire student backbone
+            # Train: discriminator, teacher_regressor, student_regressor
             self._freeze_student_completely()
-            self._freeze_student_regressor()
+            self._unfreeze_student_regressor()
             self._unfreeze_discriminator()
             self._unfreeze_teacher_regressor()
 
             # Ensure dropout/batchnorm behave correctly while training discriminator
             self.discriminator.train()
             self.teacher_regressor.train()
-            self.student_regressor.eval()
+            self.student_regressor.train()
             self.teacher.eval()
             self.student.eval()
 
@@ -216,13 +225,6 @@ class DisDKD(nn.Module):
             self.teacher.eval()
             self.student.eval()
             self._set_student_train_mode_up_to_layer_g(layers_to_train)
-
-            # Keep frozen modules in eval mode so dropout does not corrupt logits
-            self.discriminator.eval()
-            self.teacher_regressor.eval()
-            self.student_regressor.train()
-            self.teacher.eval()
-            self.student.train()
 
         elif phase == 3:
             # Train: entire student
@@ -361,9 +363,12 @@ class DisDKD(nn.Module):
         if not self.normalize_hidden:
             return hidden
 
-        flat = hidden.flatten(2)
-        mean = flat.mean(dim=2, keepdim=True)
-        std = flat.std(dim=2, keepdim=True, unbiased=False) + 1e-6
+        # Normalize using batch + spatial statistics per channel to preserve
+        # inter-sample differences while preventing global scale shortcuts.
+        B, C, H, W = hidden.shape
+        flat = hidden.view(B, C, H * W)
+        mean = flat.mean(dim=(0, 2), keepdim=True)
+        std = flat.std(dim=(0, 2), keepdim=True, unbiased=False) + 1e-6
         normalized = (flat - mean) / std
         return normalized.view_as(hidden)
 
@@ -424,7 +429,7 @@ class DisDKD(nn.Module):
     def forward_phase1(self, x):
         """
         Phase 1: Train discriminator to distinguish teacher (1) from student (0).
-        Student is completely frozen.
+        Student backbone is frozen but regressors are trainable.
         Discriminator outputs logits, not probabilities.
         """
         batch_size = x.size(0)
@@ -440,14 +445,9 @@ class DisDKD(nn.Module):
 
         # Project to hidden space
         teacher_hidden = self.teacher_regressor(teacher_feat)
-        with torch.no_grad():
-            student_hidden = self.student_regressor(student_feat)
+        student_hidden = self.student_regressor(student_feat)
 
-        # Normalize / add noise so discriminator cannot rely on scale shortcuts
-        teacher_hidden = self._preprocess_hidden(teacher_hidden, add_noise=True)
-        student_hidden = self._preprocess_hidden(student_hidden)
-
-        # Match spatial dimensions
+        # Match spatial dimensions before preprocessing
         student_hidden = self.match_spatial_dimensions(student_hidden, teacher_hidden)
 
         # Normalize / add noise so discriminator cannot rely on scale shortcuts
@@ -456,7 +456,7 @@ class DisDKD(nn.Module):
 
         # Discriminator predictions (logits)
         teacher_logits = self.discriminator(teacher_hidden)
-        student_logits = self.discriminator(student_hidden.detach())
+        student_logits = self.discriminator(student_hidden)
 
         # Labels
         real_labels = torch.ones(batch_size, 1, device=x.device)
@@ -580,9 +580,11 @@ class DisDKD(nn.Module):
             raise ValueError(f"Invalid phase: {self.current_phase}")
 
     def get_phase1_optimizer(self, lr=1e-3, weight_decay=1e-4):
-        """Get optimizer for Phase 1 (discriminator + teacher_regressor)."""
-        params = list(self.discriminator.parameters()) + list(
-            self.teacher_regressor.parameters()
+        """Get optimizer for Phase 1 (discriminator + both regressors)."""
+        params = (
+            list(self.discriminator.parameters())
+            + list(self.teacher_regressor.parameters())
+            + list(self.student_regressor.parameters())
         )
         return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
 
