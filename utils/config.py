@@ -121,6 +121,12 @@ def parse_args():
         help="Max epochs for Phase 1 (discriminator warmup)",
     )
     parser.add_argument(
+        "--interleaving_epochs",
+        type=int,
+        default=10,
+        help="Epochs for Interleaving Phases"
+    )
+    parser.add_argument(
         "--disdkd_phase2_epochs",
         type=int,
         default=6,
