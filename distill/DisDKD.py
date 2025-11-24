@@ -76,6 +76,7 @@ class FeatureDiscriminator(nn.Module):
         )
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         # Deliberately shallow head with high dropout to avoid overpowering
         # the generator during warmup.
@@ -159,6 +160,7 @@ class DisDKD(nn.Module):
 
         self.teacher_layer = teacher_layer
         self.student_layer = student_layer
+        self.phase2_layers_to_train = None
 
         # Freeze teacher parameters (always frozen)
         for param in self.teacher.parameters():
