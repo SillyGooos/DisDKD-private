@@ -300,7 +300,15 @@ class Trainer:
             result = self.model(inputs)
 
             loss = result["disc_loss"]
+            if not torch.isfinite(loss):
+                print(f"Skipping batch in Phase 1 due to non-finite loss: {loss.item()}")
+                optimizer.zero_grad()
+                continue
+
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in self.model.parameters() if p.requires_grad], max_norm=5.0
+            )
             optimizer.step()
 
             # Update meters
@@ -346,7 +354,15 @@ class Trainer:
             result = self.model(inputs)
 
             loss = result.get("total_loss", result["adversarial_loss"])
+            if not torch.isfinite(loss):
+                print(f"Skipping batch in Phase 2 due to non-finite loss: {loss.item()}")
+                optimizer.zero_grad()
+                continue
+
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in self.model.parameters() if p.requires_grad], max_norm=5.0
+            )
             optimizer.step()
 
             # Update meters
@@ -413,7 +429,15 @@ class Trainer:
             ce_loss = self.criterion(student_logits, targets)
             total_loss = self.args.alpha * ce_loss + dkd_loss
 
+            if not torch.isfinite(total_loss):
+                print(f"Skipping batch in Phase 3 due to non-finite loss: {total_loss.item()}")
+                optimizer.zero_grad()
+                continue
+
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in self.model.parameters() if p.requires_grad], max_norm=5.0
+            )
             optimizer.step()
 
             # Compute accuracy
